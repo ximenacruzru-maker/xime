@@ -530,7 +530,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       <p id="sdrCompCaption" style="font-size:11.5px;color:#3E4A42;background:var(--cream);border-left:3px solid var(--gold);padding:9px 14px;margin:0 0 16px;line-height:1.55;"></p>
       <table>
         <thead>
-          <tr><th>SDR</th><th class="num">Transfers Logged</th><th class="num">Qualified Transfers</th><th class="num">Qualified Bonus</th><th class="num">Bound Policies</th><th class="num">Bound Bonus</th><th class="num">Total Bonus</th></tr>
+          <tr><th>SDR</th><th class="num">Transfers Logged</th><th class="num">Qualified Transfers</th><th class="num">Qualified Bonus</th><th class="num">Bound Policies</th><th class="num">Bound Bonus</th><th class="num">Conversion Rate</th><th class="num">Total Bonus</th></tr>
         </thead>
         <tbody id="sdrCompTable"></tbody>
       </table>
@@ -585,6 +585,22 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         </div>
       </div>
       <p style="font-size:10.5px;color:var(--gray);margin:10px 0 0;">"Won" is AgencyZoom's live status on the verified transfer subset (Akash, Jackeline, and Rhon where quote-confirmed) — not the full transfer log, since only verified ones were cross-checked live.</p>
+    </div>
+
+    <div class="card" style="margin-top:0;">
+      <div class="section-title" style="margin:-20px -22px 18px;">SDR Conversion Rate — Transfer to Bind</div>
+      <div class="two-col">
+        <div>
+          <div class="chart-box"><canvas id="sdrConversionChart"></canvas></div>
+        </div>
+        <div>
+          <table>
+            <thead><tr><th>SDR</th><th class="num">Qualified Transfers</th><th class="num">Bound Policies</th><th class="num">Conversion Rate</th></tr></thead>
+            <tbody id="sdrConversionTable"></tbody>
+          </table>
+        </div>
+      </div>
+      <p style="font-size:10.5px;color:var(--gray);margin:10px 0 0;">Conversion Rate = Bound Policies ÷ Qualified Transfers (a qualified transfer is one with a real, verified quote premium logged in AgencyZoom). See the Commissions tab for the full per-SDR breakdown.</p>
     </div>
 
     <div class="card" style="margin-top:0;">
@@ -1539,6 +1555,8 @@ function renderSdrCompensation(){
   document.getElementById('sdrCompTable').innerHTML = sdrNames.map(name=>{
     const s = sdrComp[name];
     const rowId = 'sdrdetail-' + name;
+    const rate = s.qualifiedTransfers ? (s.boundPolicies / s.qualifiedTransfers * 100) : 0;
+    const rateColor = rate >= 30 ? 'var(--mid-green)' : (rate >= 15 ? 'var(--gold)' : 'var(--red)');
     return `<tr>
       <td><span class="comm-producer-link" onclick="toggleCommissionDetail('${rowId}')">${name} <span class="comm-chev" id="chev-${rowId}">▸</span></span></td>
       <td class="num">${fmt(s.totalLogged)}</td>
@@ -1546,10 +1564,11 @@ function renderSdrCompensation(){
       <td class="num">${fmtMoney(s.qualifiedBonus)}</td>
       <td class="num">${fmt(s.boundPolicies)}</td>
       <td class="num">${fmtMoney(s.boundBonus)}</td>
+      <td class="num" style="font-weight:bold;color:${rateColor};">${rate.toFixed(1)}%</td>
       <td class="num" style="font-weight:bold;">${fmtMoney(s.totalBonus)}</td>
     </tr>
     <tr class="comm-detail-row" id="${rowId}" style="display:none;">
-      <td colspan="7">${buildSdrDetailHTML(name)}</td>
+      <td colspan="8">${buildSdrDetailHTML(name)}</td>
     </tr>`;
   }).join('') + (sdrNames.length ? `
     <tr style="font-weight:bold;">
@@ -1559,6 +1578,11 @@ function renderSdrCompensation(){
       <td class="num">${fmtMoney(sdrNames.reduce((a,n)=>a+sdrComp[n].qualifiedBonus,0))}</td>
       <td class="num">${fmt(sdrNames.reduce((a,n)=>a+sdrComp[n].boundPolicies,0))}</td>
       <td class="num">${fmtMoney(sdrNames.reduce((a,n)=>a+sdrComp[n].boundBonus,0))}</td>
+      <td class="num">${(() => {
+        const totQ = sdrNames.reduce((a,n)=>a+sdrComp[n].qualifiedTransfers,0);
+        const totB = sdrNames.reduce((a,n)=>a+sdrComp[n].boundPolicies,0);
+        return totQ ? (totB/totQ*100).toFixed(1) : '0.0';
+      })()}%</td>
       <td class="num">${fmtMoney(sdrNames.reduce((a,n)=>a+sdrComp[n].totalBonus,0))}</td>
     </tr>` : '<tr><td colspan="7" class="empty-row">No SDR compensation data available.</td></tr>');
 }
@@ -1609,7 +1633,7 @@ document.querySelectorAll('.commission-folio-btn').forEach(btn=>{
 });
 
 // ============ SDR TRANSFERS MODE ============
-let sdrBySdrChart, sdrByProducerChart, sdrOutcomeChart, producerClosingChart;
+let sdrBySdrChart, sdrByProducerChart, sdrOutcomeChart, producerClosingChart, sdrConversionChart;
 
 let sdrScope = 'all'; // 'all' | 'daily' | 'folio'
 let sdrScopeValue = null; // selected date or folio key
@@ -1742,6 +1766,26 @@ function renderSdrTransfers(){
     const rate = received ? (won/received*100).toFixed(1) : '0.0';
     return `<tr><td>${p}</td><td class="num">${received}</td><td class="num">${won}</td><td class="num">${rate}%</td></tr>`;
   }).join('') : '<tr><td colspan="4" class="empty-row">No transfers in this period.</td></tr>';
+
+  // SDR Conversion Rate — Transfer to Bind (always office-wide, from verified compensation data)
+  const sdrCompAll = DATA.sdrCompensation || {};
+  const sdrConvEntries = ['Akash','Jackeline','Rhon']
+    .filter(n=>sdrCompAll[n])
+    .map(n=>{
+      const s = sdrCompAll[n];
+      const rate = s.qualifiedTransfers ? (s.boundPolicies / s.qualifiedTransfers * 100) : 0;
+      return [n, s.qualifiedTransfers, s.boundPolicies, rate];
+    })
+    .sort((a,b)=>b[3]-a[3]);
+
+  if(sdrConversionChart) sdrConversionChart.destroy();
+  if(sdrConvEntries.length) sdrConversionChart = barChart('sdrConversionChart', sdrConvEntries.map(x=>x[0]), sdrConvEntries.map(x=>Math.round(x[3]*10)/10), {colors:'#2E5B44', percent:true});
+  else document.getElementById('sdrConversionChart').getContext('2d').clearRect(0,0,9999,9999);
+
+  document.getElementById('sdrConversionTable').innerHTML = sdrConvEntries.length ? sdrConvEntries.map(([name,q,b,rate])=>{
+    const rateColor = rate >= 30 ? 'var(--mid-green)' : (rate >= 15 ? 'var(--gold)' : 'var(--red)');
+    return `<tr><td>${name}</td><td class="num">${q}</td><td class="num">${b}</td><td class="num" style="font-weight:bold;color:${rateColor};">${rate.toFixed(1)}%</td></tr>`;
+  }).join('') : '<tr><td colspan="4" class="empty-row">No SDR data available.</td></tr>';
 
   document.getElementById('sdrTableHint').textContent = `${total} transfers, ${scopeLabel}, most recent first`;
   const sorted = [...transfers].sort((a,b)=> (b.dateTime||'').localeCompare(a.dateTime||''));
