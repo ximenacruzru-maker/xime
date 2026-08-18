@@ -110,9 +110,7 @@ def build_pipeline_data(jwt):
     open_counts = {}
 
     for lead in all_leads:
-        assigned = lead.get("assignToFirstname", "") + " " + lead.get(
-            "assignToLastname", ""
-        )
+        assigned = (lead.get("assignToFirstname") or "") + " " + (lead.get("assignToLastname") or "")
         assigned = assigned.strip() or "Unassigned"
         open_counts[assigned] = open_counts.get(assigned, 0) + 1
 
@@ -120,8 +118,8 @@ def build_pipeline_data(jwt):
         time.sleep(0.15)
 
         entry = {
-            "name": (lead.get("firstname", "") + " " + lead.get("lastname", "")).strip()
-            or lead.get("contactFirstName", "Unknown"),
+            "name": ((lead.get("firstname") or "") + " " + (lead.get("lastname") or "")).strip()
+            or lead.get("contactFirstName") or "Unknown",
             "source": lead.get("leadSourceName"),
             "pipeline": lead.get("_pipelineName"),
             "created": lead.get("createDate"),
