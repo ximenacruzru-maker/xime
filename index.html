@@ -1565,7 +1565,12 @@ function renderSdrCompensation(){
 
 function buildSdrDetailHTML(sdrName){
   const transfers = (DATA.sdrTransfers || []).filter(t=>t.sdr===sdrName)
-    .sort((a,b)=>(b.dateTime||'').localeCompare(a.dateTime||''));
+    .sort((a,b)=>{
+      const aBound = (a.azStatus===2 || a.boundViaLedger) ? 1 : 0;
+      const bBound = (b.azStatus===2 || b.boundViaLedger) ? 1 : 0;
+      if(aBound !== bBound) return bBound - aBound; // bound/WON first
+      return (b.dateTime||'').localeCompare(a.dateTime||''); // then most recent first
+    });
   if(!transfers.length) return '<div style="padding:12px;color:var(--gray);">No transfers on file.</div>';
 
   const rows = transfers.map(t=>{
