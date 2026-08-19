@@ -330,6 +330,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
               <th class="num">Revenue/Sale</th>
               <th class="num">Quote→Sale %</th>
               <th class="num">Show→Sale %</th>
+              <th class="num">Perf Index <span style="font-weight:400;">ⓘ</span></th>
             </tr>
           </thead>
           <tbody id="producerPerfTable"></tbody>
@@ -341,6 +342,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         <strong>Leads</strong> = still-open pipeline leads + sales closed this folio. <strong>Quotes</strong> = sales + open pipeline leads with a logged premium (likely undercounts true quoting activity — see Scorecard methodology note).
         <strong>Revenue/Sale</strong> is commission ÷ sales as a simple average; actual commission is calculated on cumulative folio premium with tier thresholds, not per-sale, so this is directional.
         <strong>Premium/Producer</strong> and <strong>Sales/Producer</strong> appear in the summary line below the totals row (total ÷ number of producers with a sale this folio), since they're not meaningful as a per-producer column (it would just restate that producer's own numbers).
+      </p>
+      <p style="font-size:10.5px;color:var(--gray);margin:8px 2px 0;line-height:1.6;">
+        <strong>Performance Index</strong> = 40% Premium + 20% Policies + 15% Close Rate + 15% Policies/Household + 10% Premium/Household (as a quality proxy — see note below), each scored against a benchmark and capped at 120% to prevent one outlier account from dominating the score.
+        Premium and Policies are ramp-adjusted by tenure (producers under 6 months get proportionally scaled volume targets); Close Rate, Policies/Household, and the quality proxy are NOT tenure-adjusted, since those reflect skill rather than accumulated time.
+        Benchmarks (100% mark): $45K+ Premium/Folio, ~45 Policies (22.5 households × 2 policies), 35%+ Close Rate, 2+ Policies/Household, $2,000+ Premium/Household.
+        <strong>True retention/quality data isn't available from AgencyZoom</strong> (see Scorecard note) — Premium/Household is used as a proxy for the "quality" weight since it directly addresses the stated goal of preventing a few large accounts from inflating a score that should reflect consistent, high-quality household acquisition.
+        Tenure data shows Ximena at 36mo and Brandon at 9.5mo, but the other 6 all show an identical 1.5mo/Jul 1 start — confirm whether that's a real onboarding cohort or a placeholder before trusting the ramp adjustment for those 6.
       </p>
     </div>
   </section>
@@ -2434,10 +2442,24 @@ function renderProducerPerfTable(){
     const policiesPerSale = salesCount ? (policies/salesCount) : 0;
     const premiumPerSale = salesCount ? (premium/salesCount) : 0;
     const revenuePerSale = salesCount ? (commission/salesCount) : 0;
-    return { p, leads, quotes, salesCount, closeRate, policies, premium, policiesPerSale, premiumPerSale, revenuePerSale, quoteToSale };
-  }).sort((a,b)=>b.premium-a.premium);
 
-  document.getElementById('producerPerfTable').innerHTML = rows.map(r=>`
+    // Performance Index: 40% Premium + 20% Policies + 15% Close Rate + 15% Policies/Household + 10% Premium/Household (quality proxy)
+    const tenureMonths = ((DATA.producerStats||{})[p]||{}).tenureMonths ?? 0;
+    const rampFactor = Math.max(0.15, Math.min(1, tenureMonths/6)); // volume targets ramp up over first 6 months
+    const cap = v => Math.min(120, v);
+    const premiumScore = cap(45000*rampFactor ? premium/(45000*rampFactor)*100 : 0);
+    const policiesScore = cap(45*rampFactor ? policies/(45*rampFactor)*100 : 0);
+    const closeRateScore = cap(closeRate/35*100);
+    const policiesPerHhScore = cap(policiesPerSale/2*100);
+    const qualityScore = cap(premiumPerSale/2000*100);
+    const perfIndex = 0.40*premiumScore + 0.20*policiesScore + 0.15*closeRateScore + 0.15*policiesPerHhScore + 0.10*qualityScore;
+
+    return { p, leads, quotes, salesCount, closeRate, policies, premium, policiesPerSale, premiumPerSale, revenuePerSale, quoteToSale, perfIndex, tenureMonths };
+  }).sort((a,b)=>b.perfIndex-a.perfIndex);
+
+  document.getElementById('producerPerfTable').innerHTML = rows.map(r=>{
+    const idxColor = r.perfIndex>=100 ? 'var(--mid-green)' : (r.perfIndex>=70 ? 'var(--gold)' : 'var(--red)');
+    return `
     <tr>
       <td>${r.p}</td>
       <td class="num">${fmt(r.leads)}</td>
@@ -2453,8 +2475,9 @@ function renderProducerPerfTable(){
       <td class="num">${fmtMoney(r.revenuePerSale)}</td>
       <td class="num">${r.quoteToSale.toFixed(1)}%</td>
       <td class="num" style="color:var(--gray);">—</td>
-    </tr>
-  `).join('') || '<tr><td colspan="14" class="empty-row">No producers on file.</td></tr>';
+      <td class="num" style="font-weight:bold;color:${idxColor};" title="Tenure: ${r.tenureMonths}mo">${r.perfIndex.toFixed(0)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="15" class="empty-row">No producers on file.</td></tr>';
 
   const activeProducers = rows.filter(r=>r.premium>0).length || 1;
   const totalPremium = rows.reduce((a,r)=>a+r.premium,0);
@@ -2463,6 +2486,7 @@ function renderProducerPerfTable(){
   const totalLeads = rows.reduce((a,r)=>a+r.leads,0);
   const totalQuotes = rows.reduce((a,r)=>a+r.quotes,0);
   const totalCommission = Object.values(commByFolio).reduce((a,c)=>a+(c.totalCommission||0),0);
+  const avgPerfIndex = rows.length ? rows.reduce((a,r)=>a+r.perfIndex,0)/rows.length : 0;
   document.getElementById('producerPerfFooter').innerHTML = `
     <tr style="font-weight:bold;background:var(--pale-green);">
       <td>TEAM TOTAL</td>
@@ -2479,9 +2503,10 @@ function renderProducerPerfTable(){
       <td class="num">${totalSales ? fmtMoney(totalCommission/totalSales) : '$0'}</td>
       <td class="num">${totalQuotes ? (totalPolicies/totalQuotes*100).toFixed(1) : '0.0'}%</td>
       <td class="num" style="color:var(--gray);">—</td>
+      <td class="num">${avgPerfIndex.toFixed(0)}</td>
     </tr>
     <tr style="font-size:11px;color:var(--gray);background:var(--cream);">
-      <td colspan="14" style="padding:8px 10px;">
+      <td colspan="15" style="padding:8px 10px;">
         <strong>Premium / Producer:</strong> ${fmtMoney(totalPremium/activeProducers)} &nbsp;·&nbsp;
         <strong>Sales / Producer:</strong> ${(totalSales/activeProducers).toFixed(1)} &nbsp;
         (${activeProducers} producer${activeProducers===1?'':'s'} with a sale this folio, out of ${rows.length} on the roster)
