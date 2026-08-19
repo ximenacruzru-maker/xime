@@ -547,8 +547,19 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         </div>
       </div>
       <div class="sc-header-filters">
-        <div class="sc-filter"><label>PERIOD</label><select id="scPeriodFilter"><option value="mtd">MTD</option><option value="folio">Current Folio</option></select></div>
-        <div class="sc-filter"><label>FOLIO</label><select id="scFolioFilter"></select></div>
+        <div class="sc-filter"><label>PERIOD</label><select id="scPeriodFilter">
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="folio" selected>Folio</option>
+          <option value="wtd">WTD</option>
+          <option value="mtd">MTD</option>
+          <option value="qtd">QTD</option>
+          <option value="ytd">YTD</option>
+          <option value="custom">Custom</option>
+        </select></div>
+        <div class="sc-filter" id="scFolioFilterWrap"><label>FOLIO</label><select id="scFolioFilter"></select></div>
+        <div class="sc-filter" id="scCustomFromWrap" style="display:none;"><label>FROM</label><input type="date" id="scCustomFrom" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:12px;padding:5px 8px;border-radius:4px;"></div>
+        <div class="sc-filter" id="scCustomToWrap" style="display:none;"><label>TO</label><input type="date" id="scCustomTo" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:12px;padding:5px 8px;border-radius:4px;"></div>
         <div class="sc-filter"><label>PRODUCER</label><select id="scProducerFilter"><option value="all">All</option></select></div>
         <div class="sc-filter"><label>PRODUCT</label><select id="scProductFilter"><option value="all">All</option></select></div>
       </div>
@@ -1252,7 +1263,7 @@ function renderTrend(){
 }
 
 document.getElementById('btnScorecard').addEventListener('click', ()=>{ mode='scorecard'; render(); });
-['scFolioFilter','scProducerFilter','scProductFilter','scPeriodFilter'].forEach(id=>{
+['scFolioFilter','scProducerFilter','scProductFilter','scPeriodFilter','scCustomFrom','scCustomTo'].forEach(id=>{
   document.getElementById(id).addEventListener('change', renderScorecard);
 });
 document.getElementById('btnDaily').addEventListener('click', ()=>{ mode='daily'; render(); });
@@ -2540,18 +2551,24 @@ function ringChart(canvasId, percent, color){
 }
 
 function scCardHTML(opts){
-  // opts: {icon, iconBg, label, value, goalText, pct, ringColor, delta, deltaGood, unavailable, ringId}
+  // opts: {icon, iconBg, label, value, goalText, pct, deltaGood, unavailable, ringId, change}
   if(opts.unavailable){
     return `<div class="sc-card unavailable">
       <div class="sc-card-top">
         <div class="sc-icon" style="background:${opts.iconBg};">${opts.icon}</div>
-        <div class="sc-unavail-badge">NO DATA</div>
+        <div class="sc-unavail-badge">${opts.goalText && opts.goalText.includes('switch') ? 'FOLIO ONLY' : 'NO DATA'}</div>
       </div>
       <div class="sc-card-label">${opts.label}</div>
-      <div class="sc-card-value">—</div>
-      <div class="sc-card-goal">Not tracked in AgencyZoom</div>
+      <div class="sc-card-value">${opts.value && opts.value!=='—' ? opts.value : '—'}</div>
+      <div class="sc-card-goal">${opts.goalText || 'Not tracked in AgencyZoom'}</div>
     </div>`;
   }
+  const ringHTML = (opts.pct!==null && opts.pct!==undefined)
+    ? `<div class="sc-ring-wrap"><canvas id="${opts.ringId}"></canvas><div class="sc-ring-pct">${Math.round(opts.pct)}%</div></div>`
+    : `<div class="sc-ring-wrap"></div>`;
+  const changeHTML = opts.change
+    ? `<div class="sc-delta ${opts.change.good?'good':'bad'}">${opts.change.text}</div><div class="sc-delta-label">${opts.change.isNote?'':'change vs prior period'}</div>`
+    : `<div class="sc-delta-label">—</div>`;
   return `<div class="sc-card">
     <div class="sc-card-top">
       <div class="sc-icon" style="background:${opts.iconBg};">${opts.icon}</div>
@@ -2560,49 +2577,145 @@ function scCardHTML(opts){
     <div class="sc-card-value">${opts.value}</div>
     <div class="sc-card-goal">${opts.goalText||''}</div>
     <div class="sc-card-bottom">
-      <div class="sc-ring-wrap"><canvas id="${opts.ringId}"></canvas><div class="sc-ring-pct">${Math.round(opts.pct)}%</div></div>
-      <div>
-        <div class="sc-delta ${opts.deltaGood?'good':'bad'}">${opts.deltaGood?'▲':'▼'} ${opts.delta}</div>
-        <div class="sc-delta-label">to goal</div>
-      </div>
+      ${ringHTML}
+      <div>${changeHTML}</div>
     </div>
   </div>`;
 }
 
-function computeScorecardMetrics(folioKey, producerFilter, productFilter){
-  const folio = SALES.folio[folioKey];
-  let sales = folio.sales.filter(s=>s.confirmed);
-  if(producerFilter && producerFilter!=='all') sales = sales.filter(s=>s.producer===producerFilter);
-  if(productFilter && productFilter!=='all') sales = sales.filter(s=>s.policyType===productFilter);
+function ymd(d){ return d.toISOString().slice(0,10); }
+function addDays(dateStr, n){ const d = new Date(dateStr+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return ymd(d); }
+function daysBetween(a,b){ return Math.round((new Date(b+'T00:00:00Z') - new Date(a+'T00:00:00Z'))/86400000)+1; }
 
-  const writtenPremium = sales.reduce((a,s)=>a+s.premium,0);
-  const policiesSold = sales.length;
-  const customers = new Set(sales.map(s=>s.name)).size;
+function getPeriodRange(periodType, customFrom, customTo){
+  const today = ymd(new Date());
+  const t = new Date(today+'T00:00:00Z');
+  const year = t.getUTCFullYear(), month = t.getUTCMonth(), dow = t.getUTCDay(); // 0=Sun
 
-  const commByFolio = DATA.commissionsByFolio[folioKey] || {};
-  let commission = 0;
-  Object.entries(commByFolio).forEach(([p,c])=>{
-    if(producerFilter && producerFilter!=='all' && p!==producerFilter) return;
-    commission += c.totalCommission || 0;
+  if(periodType === 'today'){
+    return { start: today, end: today, priorStart: addDays(today,-1), priorEnd: addDays(today,-1), label: 'Today', incomplete:false };
+  }
+  if(periodType === 'yesterday'){
+    const y = addDays(today,-1);
+    return { start: y, end: y, priorStart: addDays(y,-1), priorEnd: addDays(y,-1), label: 'Yesterday', incomplete:false };
+  }
+  if(periodType === 'folio'){
+    const { current, last } = getActiveFolioKeys();
+    const f = SALES.folio[current];
+    return { start: f.start, end: today < f.end ? today : f.end, priorStart: null, priorEnd: null, label: FOLIO_LABELS[current]||current, incomplete:false, isFolio:true, folioKey: current, priorFolioKey: last };
+  }
+  if(periodType === 'wtd'){
+    const mondayOffset = dow===0 ? -6 : -(dow-1);
+    const weekStart = addDays(today, mondayOffset);
+    const daysElapsed = daysBetween(weekStart, today);
+    const priorStart = addDays(weekStart, -7);
+    const priorEnd = addDays(priorStart, daysElapsed-1);
+    return { start: weekStart, end: today, priorStart, priorEnd, label: 'Week to Date', incomplete:false };
+  }
+  if(periodType === 'mtd'){
+    const monthStart = `${year}-${String(month+1).padStart(2,'0')}-01`;
+    const daysElapsed = daysBetween(monthStart, today);
+    const prevMonth = new Date(Date.UTC(year, month-1, 1));
+    const priorStart = ymd(prevMonth);
+    const priorEnd = addDays(priorStart, daysElapsed-1);
+    return { start: monthStart, end: today, priorStart, priorEnd, label: 'Month to Date', incomplete:false };
+  }
+  if(periodType === 'qtd'){
+    const qStartMonth = Math.floor(month/3)*3;
+    const quarterStart = ymd(new Date(Date.UTC(year, qStartMonth, 1)));
+    const daysElapsed = daysBetween(quarterStart, today);
+    const priorQuarterStart = ymd(new Date(Date.UTC(year, qStartMonth-3, 1)));
+    const priorEnd = addDays(priorQuarterStart, daysElapsed-1);
+    return { start: quarterStart, end: today, priorStart: priorQuarterStart, priorEnd, label: 'Quarter to Date', incomplete:false };
+  }
+  if(periodType === 'ytd'){
+    const yearStart = `${year}-01-01`;
+    const daysElapsed = daysBetween(yearStart, today);
+    const priorYearStart = `${year-1}-01-01`;
+    const priorEnd = addDays(priorYearStart, daysElapsed-1);
+    return { start: yearStart, end: today, priorStart: priorYearStart, priorEnd, label: 'Year to Date', incomplete:true };
+  }
+  if(periodType === 'custom'){
+    const start = customFrom || today, end = customTo || today;
+    const len = daysBetween(start,end);
+    const priorEnd = addDays(start,-1);
+    const priorStart = addDays(priorEnd, -(len-1));
+    return { start, end, priorStart, priorEnd, label: `${start} – ${end}`, incomplete:false };
+  }
+  return getPeriodRange('folio');
+}
+
+function aggregateDailyRange(startDate, endDate, producerFilter, productFilter){
+  let writtenPremium=0, policiesSold=0;
+  const customers = new Set();
+  Object.entries(SALES.daily).forEach(([date,rec])=>{
+    if(date < startDate || date > endDate) return;
+    (rec.sales||[]).forEach(s=>{
+      if(!s.confirmed) return;
+      if(producerFilter && producerFilter!=='all' && s.producer!==producerFilter) return;
+      if(productFilter && productFilter!=='all' && s.policyType!==productFilter) return;
+      writtenPremium += s.premium;
+      policiesSold += 1;
+      customers.add(s.name);
+    });
   });
+  return { writtenPremium, policiesSold, customers: customers.size };
+}
 
-  let openWithPremium = 0;
-  Object.entries(DATA.producerPipelineLeads||{}).forEach(([p,leads])=>{
-    if(producerFilter && producerFilter!=='all' && p!==producerFilter) return;
-    openWithPremium += leads.filter(l=>l.quotePremium).length;
-  });
-  const quotes = policiesSold + openWithPremium;
-  const quoteToSale = quotes ? (policiesSold/quotes*100) : 0;
-  const policiesPerCustomer = customers ? (policiesSold/customers) : 0;
+function computeScorecardMetrics(periodType, customFrom, customTo, producerFilter, productFilter){
+  const range = getPeriodRange(periodType, customFrom, customTo);
+  const cur = aggregateDailyRange(range.start, range.end, producerFilter, productFilter);
+  const prior = range.priorStart ? aggregateDailyRange(range.priorStart, range.priorEnd, producerFilter, productFilter) : null;
 
+  const policiesPerCustomer = cur.customers ? (cur.policiesSold/cur.customers) : 0;
+
+  // Goal: prorate the current folio's goal by days-in-period (Folio period uses the exact goal, no proration)
+  const { current: curFolioKey } = getActiveFolioKeys();
+  const curFolio = SALES.folio[curFolioKey];
   let goalSum = 0;
   Object.entries(DATA.producerFolioGoals||{}).forEach(([p,g])=>{
     if(producerFilter && producerFilter!=='all' && p!==producerFilter) return;
     goalSum += g.goal || 0;
   });
-  const premiumVsGoal = goalSum ? (writtenPremium/goalSum*100) : 0;
+  const folioDays = daysBetween(curFolio.start, curFolio.end);
+  const dailyGoalRate = folioDays ? goalSum/folioDays : 0;
+  const periodDays = daysBetween(range.start, range.end);
+  const proratedGoal = range.isFolio ? goalSum : Math.round(dailyGoalRate * periodDays);
+  const premiumVsGoal = proratedGoal ? (cur.writtenPremium/proratedGoal*100) : 0;
 
-  return { writtenPremium, policiesSold, customers, commission, quotes, quoteToSale, policiesPerCustomer, goalSum, premiumVsGoal };
+  // Folio-only metrics: Commission and Quotes are only well-defined at the folio level
+  let commission = null, quotes = null, quoteToSale = null;
+  if(range.isFolio){
+    const commByFolio = DATA.commissionsByFolio[range.folioKey] || {};
+    commission = 0;
+    Object.entries(commByFolio).forEach(([p,c])=>{
+      if(producerFilter && producerFilter!=='all' && p!==producerFilter) return;
+      commission += c.totalCommission || 0;
+    });
+    let openWithPremium = 0;
+    Object.entries(DATA.producerPipelineLeads||{}).forEach(([p,leads])=>{
+      if(producerFilter && producerFilter!=='all' && p!==producerFilter) return;
+      openWithPremium += leads.filter(l=>l.quotePremium).length;
+    });
+    quotes = cur.policiesSold + openWithPremium;
+    quoteToSale = quotes ? (cur.policiesSold/quotes*100) : 0;
+  }
+
+  const priorMetrics = prior ? {
+    writtenPremium: prior.writtenPremium, policiesSold: prior.policiesSold, customers: prior.customers,
+    policiesPerCustomer: prior.customers ? (prior.policiesSold/prior.customers) : 0,
+  } : null;
+
+  return {
+    range, writtenPremium: cur.writtenPremium, policiesSold: cur.policiesSold, customers: cur.customers,
+    commission, quotes, quoteToSale, policiesPerCustomer, goalSum: proratedGoal, premiumVsGoal, prior: priorMetrics,
+  };
+}
+
+function pctChange(curVal, priorVal){
+  if(priorVal===null || priorVal===undefined) return null;
+  if(priorVal===0) return curVal>0 ? 100 : 0;
+  return (curVal-priorVal)/priorVal*100;
 }
 
 function renderScorecard(){
@@ -2635,27 +2748,42 @@ function renderScorecard(){
     });
   }
 
-  const folioKey = folioSel.value || getActiveFolioKeys().current;
+  const periodType = document.getElementById('scPeriodFilter').value || 'folio';
+  document.getElementById('scFolioFilterWrap').style.display = periodType==='folio' ? '' : 'none';
+  document.getElementById('scCustomFromWrap').style.display = periodType==='custom' ? '' : 'none';
+  document.getElementById('scCustomToWrap').style.display = periodType==='custom' ? '' : 'none';
+
+  const customFrom = document.getElementById('scCustomFrom').value;
+  const customTo = document.getElementById('scCustomTo').value;
   const producerFilter = prodSel.value || 'all';
   const productFilter = prodTypeSel.value || 'all';
 
-  document.getElementById('scPeriodSub').textContent = (FOLIO_LABELS[folioKey]||folioKey) + (producerFilter!=='all' ? ' · ' + producerFilter : '') + (productFilter!=='all' ? ' · ' + productFilter : '');
+  const m = computeScorecardMetrics(periodType, customFrom, customTo, producerFilter, productFilter);
+
+  const ytdWarning = m.range.incomplete ? ' <span style="color:#D9A441;font-weight:700;">⚠ incomplete data — tracking starts May 29, 2026, missing Jan–May</span>' : '';
+  document.getElementById('scPeriodSub').innerHTML = m.range.label + ytdWarning + (producerFilter!=='all' ? ' · ' + producerFilter : '') + (productFilter!=='all' ? ' · ' + productFilter : '');
   document.getElementById('scUpdatedStamp').textContent = 'Updated ' + new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
 
-  const m = computeScorecardMetrics(folioKey, producerFilter, productFilter);
+  const chg = (curVal, priorVal) => {
+    const pct = pctChange(curVal, priorVal);
+    if(pct===null) return { text: 'no prior data', good: true, isNote: true };
+    return { text: (pct>=0?'▲ ':'▼ ')+Math.abs(pct).toFixed(1)+'% vs prior', good: pct>=0 };
+  };
+
+  const folioOnlyNote = !m.range.isFolio ? 'Folio-only metric' : null;
 
   const cards = [
-    { icon:'$', iconBg:'#2E5B44', label:'Written Premium', value: fmtMoney(m.writtenPremium), goalText: m.goalSum ? `Goal: ${fmtMoney(m.goalSum)}` : 'No goal set', pct: m.premiumVsGoal, delta: m.premiumVsGoal.toFixed(1)+'%', deltaGood: m.premiumVsGoal>=80, ringId:'scRing0' },
-    { icon:'💰', iconBg:'#C9962C', label:'Revenue / Commission', value: fmtMoney(m.commission), goalText:'this period', pct: Math.min(100, m.commission/50*1), delta: fmt(m.commission), deltaGood:true, ringId:'scRing1' },
-    { icon:'📄', iconBg:'#2E5B44', label:'Policies Sold', value: fmt(m.policiesSold), goalText:'this period', pct: Math.min(100, m.policiesSold), delta: fmt(m.policiesSold), deltaGood:true, ringId:'scRing2' },
-    { icon:'👥', iconBg:'#5B8C6E', label:'New Customers', value: fmt(m.customers), goalText:'this period', pct: Math.min(100, m.customers*2), delta: fmt(m.customers), deltaGood:true, ringId:'scRing3' },
-    { icon:'🎯', iconBg:'#C9962C', label:'Quotes', value: fmt(m.quotes), goalText:'sold + open w/ premium', pct: Math.min(100, m.quotes), delta: fmt(m.quotes), deltaGood:true, ringId:'scRing4' },
-    { icon:'📈', iconBg:'#2E5B44', label:'Quote → Sale %', value: m.quoteToSale.toFixed(1)+'%', goalText:'directional — see note below', pct: m.quoteToSale, delta: m.quoteToSale.toFixed(1)+'%', deltaGood: m.quoteToSale>=25, ringId:'scRing5' },
+    { icon:'$', iconBg:'#2E5B44', label:'Written Premium', value: fmtMoney(m.writtenPremium), goalText: m.goalSum ? `Goal: ${fmtMoney(m.goalSum)}` : 'No goal set', pct: m.premiumVsGoal, deltaGood: m.premiumVsGoal>=80, ringId:'scRing0', change: m.prior ? chg(m.writtenPremium, m.prior.writtenPremium) : null },
+    { icon:'💰', iconBg:'#C9962C', label:'Revenue / Commission', value: folioOnlyNote || fmtMoney(m.commission), goalText: folioOnlyNote ? 'switch to Folio period' : 'this period', pct: folioOnlyNote ? null : 50, deltaGood:true, ringId: folioOnlyNote ? null : 'scRing1', unavailable: !!folioOnlyNote, change: null },
+    { icon:'📄', iconBg:'#2E5B44', label:'Policies Sold', value: fmt(m.policiesSold), goalText:'this period', pct: Math.min(100, m.policiesSold*5), deltaGood:true, ringId:'scRing2', change: m.prior ? chg(m.policiesSold, m.prior.policiesSold) : null },
+    { icon:'👥', iconBg:'#5B8C6E', label:'New Customers', value: fmt(m.customers), goalText:'this period', pct: Math.min(100, m.customers*5), deltaGood:true, ringId:'scRing3', change: m.prior ? chg(m.customers, m.prior.customers) : null },
+    { icon:'🎯', iconBg:'#C9962C', label:'Quotes', value: folioOnlyNote || fmt(m.quotes), goalText: folioOnlyNote ? 'switch to Folio period' : 'sold + open w/ premium', pct: folioOnlyNote ? null : 50, deltaGood:true, ringId: folioOnlyNote ? null : 'scRing4', unavailable: !!folioOnlyNote, change: null },
+    { icon:'📈', iconBg:'#2E5B44', label:'Quote → Sale %', value: folioOnlyNote || (m.quoteToSale!==null ? m.quoteToSale.toFixed(1)+'%' : '—'), goalText: folioOnlyNote ? 'switch to Folio period' : 'directional — see note', pct: folioOnlyNote ? null : m.quoteToSale, deltaGood: (m.quoteToSale||0)>=25, ringId: folioOnlyNote ? null : 'scRing5', unavailable: !!folioOnlyNote, change: null },
     { icon:'📅', iconBg:'#999', label:'Appointments Set', unavailable:true },
     { icon:'✅', iconBg:'#999', label:'Appointments Held', unavailable:true },
     { icon:'👤', iconBg:'#999', label:'Show Rate %', unavailable:true },
     { icon:'🎯', iconBg:'#999', label:'Close Rate %', unavailable:true },
-    { icon:'📦', iconBg:'#5B8C6E', label:'Policies per Customer', value: m.policiesPerCustomer.toFixed(2), goalText:'cross-sell effectiveness', pct: Math.min(100, m.policiesPerCustomer*50), delta: m.policiesPerCustomer.toFixed(2), deltaGood: m.policiesPerCustomer>=1.3, ringId:'scRing6' },
+    { icon:'📦', iconBg:'#5B8C6E', label:'Policies per Customer', value: m.policiesPerCustomer.toFixed(2), goalText:'cross-sell effectiveness', pct: Math.min(100, m.policiesPerCustomer*50), deltaGood: m.policiesPerCustomer>=1.3, ringId:'scRing6', change: m.prior ? chg(m.policiesPerCustomer, m.prior.policiesPerCustomer) : null },
   ];
 
   document.getElementById('scKpiGrid').innerHTML = cards.map(scCardHTML).join('');
@@ -2664,14 +2792,15 @@ function renderScorecard(){
   scRingCharts.forEach(c=>c && c.destroy());
   scRingCharts = [];
   cards.forEach(c=>{
-    if(c.unavailable || !c.ringId) return;
+    if(c.unavailable || !c.ringId || c.pct===null) return;
     const color = c.deltaGood ? '#2E5B44' : '#B5453C';
     scRingCharts.push(ringChart(c.ringId, c.pct, color));
   });
 
-  // Premium vs Goal by producer bar chart
+  // Premium vs Goal by producer bar chart — always reflects the CURRENT folio regardless of period filter, since goals are folio-scoped
   const goalEntries = Object.entries(DATA.producerFolioGoals||{});
-  const folioForChart = SALES.folio[folioKey];
+  const curFolioKeyForChart = getActiveFolioKeys().current;
+  const folioForChart = SALES.folio[curFolioKeyForChart];
   const premByProducer = goalEntries.map(([p,g])=>{
     const actual = (folioForChart.byProducer[p]||0);
     return [p, g.goal ? (actual/g.goal*100) : 0];
