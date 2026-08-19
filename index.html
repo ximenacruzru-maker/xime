@@ -307,6 +307,44 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     </div>
   </section>
 
+  <section id="producerPerfSection">
+    <div class="section-title">
+      <span>Producer Performance Analysis <span class="hint">all producers · current folio</span></span>
+    </div>
+    <div class="card">
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Producer</th>
+              <th class="num">Leads</th>
+              <th class="num">Quotes</th>
+              <th class="num">Appts</th>
+              <th class="num">Shows</th>
+              <th class="num">Sales</th>
+              <th class="num">Close %</th>
+              <th class="num">Policies</th>
+              <th class="num">Premium</th>
+              <th class="num">Policies/Sale</th>
+              <th class="num">Premium/Sale</th>
+              <th class="num">Revenue/Sale</th>
+              <th class="num">Quote→Sale %</th>
+              <th class="num">Show→Sale %</th>
+            </tr>
+          </thead>
+          <tbody id="producerPerfTable"></tbody>
+          <tfoot id="producerPerfFooter"></tfoot>
+        </table>
+      </div>
+      <p style="font-size:10.5px;color:var(--gray);margin:12px 2px 0;line-height:1.6;">
+        <strong>Appts, Shows, and Show→Sale %</strong> have no data source in AgencyZoom via this account's API — shown as unavailable rather than estimated.
+        <strong>Leads</strong> = still-open pipeline leads + sales closed this folio. <strong>Quotes</strong> = sales + open pipeline leads with a logged premium (likely undercounts true quoting activity — see Scorecard methodology note).
+        <strong>Revenue/Sale</strong> is commission ÷ sales as a simple average; actual commission is calculated on cumulative folio premium with tier thresholds, not per-sale, so this is directional.
+        <strong>Premium/Producer</strong> and <strong>Sales/Producer</strong> appear in the summary line below the totals row (total ÷ number of producers with a sale this folio), since they're not meaningful as a per-producer column (it would just restate that producer's own numbers).
+      </p>
+    </div>
+  </section>
+
   <!-- SNAPSHOT — scoped to whichever date/folio is selected -->
   <section id="agencyAnalyticsSection">
     <div class="section-title"><span id="snapshotTitle">Snapshot</span><span class="hint" id="snapshotHint"></span></div>
@@ -941,6 +979,7 @@ function render(){
   // Deeper analytics (carrier mix, Data Analytics dropdown, Lead Pipeline) stay available in Folio;
   // Daily is kept to just the Snapshot, per the "only show X" request
   document.getElementById('producerBreakdownSection').style.display = (isFolioMode) ? '' : 'none';
+  document.getElementById('producerPerfSection').style.display = (isFolioMode) ? '' : 'none';
   document.getElementById('analyticsToggle').style.visibility = isFolioMode ? 'visible' : 'hidden';
   document.getElementById('leadPipelineWrap').style.display = (isFolioMode) ? '' : 'none';
 
@@ -2330,6 +2369,10 @@ renderTrend();
 
 // ============ PRODUCER BREAKDOWN (main dashboard) — toggle filter by producer ============
 const CURRENT_FOLIO_KEY = getActiveFolioKeys().current;
+// Canonical roster of all active producers — sourced from AgencyZoom's employee list, not from
+// whichever producers happen to have sales this folio. This ensures nobody drops off the toggle
+// bar just because a new/sparse folio hasn't had their first sale logged yet.
+const PRODUCER_ROSTER = Object.keys(DATA.producerStats || {});
 let activeProducer = null;
 let producerCarrierChart, producerPolicyTypeChart;
 
@@ -2356,7 +2399,10 @@ function computeProducerBreakdown(producer){
 
 function buildProducerToggleBar(){
   const folio = SALES.folio[CURRENT_FOLIO_KEY];
-  const producers = Object.keys(folio.byProducer).sort((a,b)=>folio.byProducer[b]-folio.byProducer[a]);
+  // Union of the canonical roster and anyone with folio data not yet in the roster (defensive,
+  // in case a brand-new producer sells before being added to producerStats).
+  const producers = [...new Set([...PRODUCER_ROSTER, ...Object.keys(folio.byProducer)])]
+    .sort((a,b)=>(folio.byProducer[b]||0)-(folio.byProducer[a]||0));
   const bar = document.getElementById('producerToggleBar');
   bar.innerHTML = `<button class="producer-toggle-btn sans" data-producer="Team">Team</button>` +
     producers.map(p=>`<button class="producer-toggle-btn sans" data-producer="${p}">${p}</button>`).join('');
@@ -2365,6 +2411,83 @@ function buildProducerToggleBar(){
   });
   // default to Team view
   selectProducer('Team');
+  renderProducerPerfTable();
+}
+
+function renderProducerPerfTable(){
+  const folio = SALES.folio[CURRENT_FOLIO_KEY];
+  const commByFolio = DATA.commissionsByFolio[CURRENT_FOLIO_KEY] || {};
+  const roster = [...new Set([...PRODUCER_ROSTER, ...Object.keys(folio.byProducer)])];
+
+  const rows = roster.map(p=>{
+    const sales = folio.sales.filter(s=>s.producer===p && s.confirmed);
+    const policies = sales.length;
+    const salesCount = new Set(sales.map(s=>s.name)).size; // distinct customers = "sales" transactions
+    const premium = sales.reduce((a,s)=>a+s.premium,0);
+    const openPipeline = (DATA.producerOpenPipelineCount||{})[p] || 0;
+    const openWithPremium = ((DATA.producerPipelineLeads||{})[p]||[]).filter(l=>l.quotePremium).length;
+    const leads = openPipeline + policies;
+    const quotes = policies + openWithPremium;
+    const closeRate = leads ? (salesCount/leads*100) : 0;
+    const quoteToSale = quotes ? (policies/quotes*100) : 0;
+    const commission = (commByFolio[p]||{}).totalCommission || 0;
+    const policiesPerSale = salesCount ? (policies/salesCount) : 0;
+    const premiumPerSale = salesCount ? (premium/salesCount) : 0;
+    const revenuePerSale = salesCount ? (commission/salesCount) : 0;
+    return { p, leads, quotes, salesCount, closeRate, policies, premium, policiesPerSale, premiumPerSale, revenuePerSale, quoteToSale };
+  }).sort((a,b)=>b.premium-a.premium);
+
+  document.getElementById('producerPerfTable').innerHTML = rows.map(r=>`
+    <tr>
+      <td>${r.p}</td>
+      <td class="num">${fmt(r.leads)}</td>
+      <td class="num">${fmt(r.quotes)}</td>
+      <td class="num" style="color:var(--gray);">—</td>
+      <td class="num" style="color:var(--gray);">—</td>
+      <td class="num">${fmt(r.salesCount)}</td>
+      <td class="num">${r.closeRate.toFixed(1)}%</td>
+      <td class="num">${fmt(r.policies)}</td>
+      <td class="num">${fmtMoney(r.premium)}</td>
+      <td class="num">${r.policiesPerSale.toFixed(2)}</td>
+      <td class="num">${fmtMoney(r.premiumPerSale)}</td>
+      <td class="num">${fmtMoney(r.revenuePerSale)}</td>
+      <td class="num">${r.quoteToSale.toFixed(1)}%</td>
+      <td class="num" style="color:var(--gray);">—</td>
+    </tr>
+  `).join('') || '<tr><td colspan="14" class="empty-row">No producers on file.</td></tr>';
+
+  const activeProducers = rows.filter(r=>r.premium>0).length || 1;
+  const totalPremium = rows.reduce((a,r)=>a+r.premium,0);
+  const totalSales = rows.reduce((a,r)=>a+r.salesCount,0);
+  const totalPolicies = rows.reduce((a,r)=>a+r.policies,0);
+  const totalLeads = rows.reduce((a,r)=>a+r.leads,0);
+  const totalQuotes = rows.reduce((a,r)=>a+r.quotes,0);
+  const totalCommission = Object.values(commByFolio).reduce((a,c)=>a+(c.totalCommission||0),0);
+  document.getElementById('producerPerfFooter').innerHTML = `
+    <tr style="font-weight:bold;background:var(--pale-green);">
+      <td>TEAM TOTAL</td>
+      <td class="num">${fmt(totalLeads)}</td>
+      <td class="num">${fmt(totalQuotes)}</td>
+      <td class="num" style="color:var(--gray);">—</td>
+      <td class="num" style="color:var(--gray);">—</td>
+      <td class="num">${fmt(totalSales)}</td>
+      <td class="num">${totalLeads ? (totalSales/totalLeads*100).toFixed(1) : '0.0'}%</td>
+      <td class="num">${fmt(totalPolicies)}</td>
+      <td class="num">${fmtMoney(totalPremium)}</td>
+      <td class="num">${totalSales ? (totalPolicies/totalSales).toFixed(2) : '0.00'}</td>
+      <td class="num">${totalSales ? fmtMoney(totalPremium/totalSales) : '$0'}</td>
+      <td class="num">${totalSales ? fmtMoney(totalCommission/totalSales) : '$0'}</td>
+      <td class="num">${totalQuotes ? (totalPolicies/totalQuotes*100).toFixed(1) : '0.0'}%</td>
+      <td class="num" style="color:var(--gray);">—</td>
+    </tr>
+    <tr style="font-size:11px;color:var(--gray);background:var(--cream);">
+      <td colspan="14" style="padding:8px 10px;">
+        <strong>Premium / Producer:</strong> ${fmtMoney(totalPremium/activeProducers)} &nbsp;·&nbsp;
+        <strong>Sales / Producer:</strong> ${(totalSales/activeProducers).toFixed(1)} &nbsp;
+        (${activeProducers} producer${activeProducers===1?'':'s'} with a sale this folio, out of ${rows.length} on the roster)
+      </td>
+    </tr>
+  `;
 }
 
 function selectProducer(producer){
