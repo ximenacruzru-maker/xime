@@ -1633,6 +1633,14 @@ function getActiveFolioKeys(){
   for(let i=0;i<sorted.length;i++){
     if(sorted[i].start <= today) currentIdx = i;
   }
+  // If the calendar-current folio has no sales yet (brand new period, nothing logged),
+  // fall back to the most recent folio that actually has data — otherwise the whole
+  // dashboard goes to zero the instant a new folio starts, before anyone's had a chance
+  // to log a sale in it. "Last" shifts back one further to stay one step behind "current".
+  const hasData = key => SALES.folio[key] && SALES.folio[key].sales && SALES.folio[key].sales.length > 0;
+  while(currentIdx > 0 && !hasData(sorted[currentIdx].key)){
+    currentIdx--;
+  }
   const current = sorted[currentIdx].key;
   const last = currentIdx > 0 ? sorted[currentIdx-1].key : sorted[currentIdx].key;
   return { current, last };
