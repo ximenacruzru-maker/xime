@@ -1626,7 +1626,7 @@ const FOLIO_PERIODS = [
 ];
 
 function getActiveFolioKeys(){
-  const today = new Date().toISOString().slice(0,10);
+  const today = localToday();
   const sorted = [...FOLIO_PERIODS].sort((a,b)=>a.start.localeCompare(b.start));
   // Current = the latest folio whose start date is <= today
   let currentIdx = 0;
@@ -2184,7 +2184,7 @@ function addOpenItem(){
     name: task,
     type: null,
     priority: document.getElementById('todoNewPriority').value || 'Medium',
-    dateEntered: new Date().toISOString().slice(0,10),
+    dateEntered: localToday(),
     dueDate: document.getElementById('todoNewDueDate').value || null,
     responsible: (document.getElementById('todoNewResponsible').value || '').trim() || null,
     daysToComplete: null,
@@ -2905,12 +2905,22 @@ function scCardHTML(opts){
   </div>`;
 }
 
+// Determines "today" in the VIEWER'S local timezone, not UTC. This matters a lot for a business
+// in California: UTC crosses midnight into the next day while it's still evening/afternoon locally,
+// which would otherwise make "Today"/folio boundaries flip a day early for hours at a time.
+function localToday(){
+  const d = new Date();
+  const y = d.getFullYear();
+  const mo = String(d.getMonth()+1).padStart(2,'0');
+  const da = String(d.getDate()).padStart(2,'0');
+  return `${y}-${mo}-${da}`;
+}
 function ymd(d){ return d.toISOString().slice(0,10); }
 function addDays(dateStr, n){ const d = new Date(dateStr+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return ymd(d); }
 function daysBetween(a,b){ return Math.round((new Date(b+'T00:00:00Z') - new Date(a+'T00:00:00Z'))/86400000)+1; }
 
 function getPeriodRange(periodType, customFrom, customTo){
-  const today = ymd(new Date());
+  const today = localToday();
   const t = new Date(today+'T00:00:00Z');
   const year = t.getUTCFullYear(), month = t.getUTCMonth(), dow = t.getUTCDay(); // 0=Sun
 
