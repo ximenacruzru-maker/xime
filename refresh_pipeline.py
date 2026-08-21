@@ -84,12 +84,15 @@ def fetch_stage_leads(jwt, workflow_id, workflow_stage_id):
     return leads
 
 
-def fetch_quote_premium(jwt, lead_id):
+def fetch_quote_premium(jwt, lead_id, _retried=False):
     headers = {"Authorization": f"Bearer {jwt}"}
     r = requests.get(
         f"{API_BASE}/v1/api/leads/{lead_id}/quotes", headers=headers, timeout=30
     )
     if r.status_code != 200:
+        if not _retried:
+            time.sleep(1.5)  # likely rate-limited — back off and retry once before giving up
+            return fetch_quote_premium(jwt, lead_id, _retried=True)
         return 0, []
     quotes = r.json() or []
     total = sum(q.get("premium") or 0 for q in quotes)
@@ -115,7 +118,7 @@ def build_pipeline_data(jwt):
         open_counts[assigned] = open_counts.get(assigned, 0) + 1
 
         total_premium, _quotes = fetch_quote_premium(jwt, lead["id"])
-        time.sleep(0.15)
+        time.sleep(0.55)  # AgencyZoom's limit is 120 calls/min (0.5s min) — 0.15s was silently rate-limiting some calls
 
         entry = {
             "name": ((lead.get("firstname") or "") + " " + (lead.get("lastname") or "")).strip()
