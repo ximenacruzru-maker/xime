@@ -712,6 +712,9 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   <section id="commissionsModeSection" style="display:none;">
     <div class="card" style="border-bottom:none;">
       <div style="font-size:11.5px;color:#3E4A42;background:var(--cream);border-left:3px solid var(--gold);padding:14px 16px;margin:0 0 16px;line-height:1.6;">
+        <p style="margin:0 0 10px;font-weight:700;">
+          Producers are paid on the previous, fully-closed folio's results — not the in-progress current folio. The "Current Folio" numbers below are a live running total, useful for tracking progress toward qualification, but aren't what payroll is calculated from until that folio closes.
+        </p>
         <p style="margin:0 0 10px;">
           Computed per the <strong>Ironwood Insurance 2026 California Producer Compensation Plan</strong> (effective Jan 1, 2026), applied to real confirmed sales for the selected folio. Only carrier-confirmed premium counts toward qualification — unconfirmed premium is excluded until confirmed.
         </p>
@@ -1998,19 +2001,33 @@ function computeSdrCompensationForRange(startDate, endDate){
   return comp;
 }
 
+function getPreviousMonthRange(){
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-indexed, this is the PREVIOUS month relative to "month" used for current
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 0); // last day of previous month
+  const fmt = d => d.toISOString().slice(0,10);
+  const label = start.toLocaleString('en-US', {month:'long', year:'numeric'});
+  return { start: fmt(start), end: fmt(end), label };
+}
+
 function renderSdrCompensation(){
-  const range = getCurrentMonthRange();
+  // SDRs are paid the following month for the PREVIOUS month's transfers — e.g. September's
+  // payroll covers August's transfer activity. So the compensation window is last month, not this one.
+  const range = getPreviousMonthRange();
+  const payoutMonth = getCurrentMonthRange().label;
   const sdrComp = computeSdrCompensationForRange(range.start, range.end);
   const staticMeta = (DATA.sdrCompensation && DATA.sdrCompensation.meta) || {};
   const discrepHtml = (staticMeta.discrepancies && staticMeta.discrepancies.length)
     ? `<br><strong>Flagged for review:</strong> ` + staticMeta.discrepancies.map(d=>`${d.client} (${d.sdr}) — ${d.issue}`).join('; ')
     : '';
   document.getElementById('sdrCompCaption').innerHTML =
-    `<strong>Pay period: ${range.label}</strong> (SDRs are paid monthly — this auto-advances to whatever the current calendar month is). A Qualified Transfer requires a real, verified quote premium logged in AgencyZoom — dead or alive, it counts as long as it was genuinely quoted. Bound Policy Bonus uses AgencyZoom's live WON status, or a match on the agency's own confirmed sales ledger. $${staticMeta.qualifiedTransferBonus||15} per qualified transfer + $${staticMeta.boundPolicyBonus||35} per bound policy. Hourly pay isn't included — no timesheet data exists anywhere.${discrepHtml}`;
+    `<strong>Transfers from ${range.label}, paid in ${payoutMonth}.</strong> SDRs are paid the following month for the previous month's transfer activity. <strong>Jacqueline is currently the agency's only active SDR</strong> — Akash and Rhon's totals below are historical and shown for reference only, not active payroll. A Qualified Transfer requires a real, verified quote premium logged in AgencyZoom — dead or alive, it counts as long as it was genuinely quoted. Bound Policy Bonus uses AgencyZoom's live WON status, or a match on the agency's own confirmed sales ledger. $${staticMeta.qualifiedTransferBonus||15} per qualified transfer + $${staticMeta.boundPolicyBonus||35} per bound policy. Hourly pay isn't included — no timesheet data exists anywhere.${discrepHtml}`;
 
-  document.getElementById('sdrPayPeriodHint').textContent = `monthly pay period — ${range.label}`;
+  document.getElementById('sdrPayPeriodHint').textContent = `transfers from ${range.label} — paid ${payoutMonth}`;
 
-  const sdrNames = ['Akash','Jackeline','Rhon'].filter(n=>sdrComp[n]);
+  const sdrNames = ['Jackeline','Akash','Rhon'].filter(n=>sdrComp[n]);
   document.getElementById('sdrCompTable').innerHTML = sdrNames.map(name=>{
     const s = sdrComp[name];
     const rowId = 'sdrdetail-' + name;
