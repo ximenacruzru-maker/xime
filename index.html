@@ -243,6 +243,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         <button id="btnDaily" class="sans">Daily</button>
         <button id="btnFolio" class="sans">Folio</button>
         <button id="btnProducer" class="sans">Producer</button>
+        <button id="btnWritten" class="sans">Written Business</button>
         <button id="btnCommissions" class="sans">Commissions</button>
         <button id="btnSdrTransfers" class="sans">SDR Transfers</button>
         <button id="btnToDoList" class="sans">To Do List</button>
@@ -669,6 +670,45 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     </p>
   </section>
 
+  <section id="writtenModeSection" style="display:none;">
+    <div class="card" style="border-bottom:none;">
+      <p style="font-size:11.5px;color:#3E4A42;background:var(--cream);border-left:3px solid var(--gold);padding:9px 14px;margin:0 0 16px;line-height:1.55;">
+        Written business by producer, built from the same confirmed sales records as the rest of this dashboard. Filters below actually narrow the data — this isn't a static picture.
+      </p>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray);margin-bottom:5px;">Time Frame</div>
+          <select id="wbFolioSelect" class="sans" style="font-size:12.5px;color:var(--ink);padding:7px 10px;border:1px solid var(--line);background:#fff;min-width:200px;border-radius:3px;"></select>
+        </div>
+        <div>
+          <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray);margin-bottom:5px;">Carrier</div>
+          <select id="wbCarrierSelect" class="sans" style="font-size:12.5px;color:var(--ink);padding:7px 10px;border:1px solid var(--line);background:#fff;min-width:160px;border-radius:3px;"></select>
+        </div>
+        <div>
+          <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray);margin-bottom:5px;">Business Type</div>
+          <select id="wbBizTypeSelect" class="sans" style="font-size:12.5px;color:var(--ink);padding:7px 10px;border:1px solid var(--line);background:#fff;min-width:160px;border-radius:3px;">
+            <option value="all">All</option>
+            <option value="personal">Personal</option>
+            <option value="commercial">Commercial</option>
+          </select>
+        </div>
+        <div style="margin-left:auto;align-self:flex-end;">
+          <div class="toggle" style="border-color:var(--dark-green);width:fit-content;">
+            <button id="wbMetricPremium" class="sans active" data-metric="premium">Premium</button>
+            <button id="wbMetricPolicies" class="sans" data-metric="policies">Policies</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="kpi-row" id="wbKpiRow" style="margin-bottom:0;"></div>
+    </div>
+    <div class="card" style="margin-top:0;">
+      <div class="section-title" id="wbChartTitle" style="margin:-20px -22px 18px;">Written Business by Producer</div>
+      <div class="chart-box" style="height:320px;"><canvas id="wbChart"></canvas></div>
+    </div>
+  </section>
+
   <section id="commissionsModeSection" style="display:none;">
     <div class="card" style="border-bottom:none;">
       <div style="font-size:11.5px;color:#3E4A42;background:var(--cream);border-left:3px solid var(--gold);padding:14px 16px;margin:0 0 16px;line-height:1.6;">
@@ -1021,17 +1061,21 @@ function render(){
   document.getElementById('btnCommissions').classList.toggle('active', mode==='commissions');
   document.getElementById('btnSdrTransfers').classList.toggle('active', mode==='sdr');
   document.getElementById('btnToDoList').classList.toggle('active', mode==='todo');
+  document.getElementById('btnWritten').classList.toggle('active', mode==='written');
 
   const isScorecardMode = mode==='scorecard';
   const isProducerMode = mode==='producer';
   const isCommissionsMode = mode==='commissions';
   const isSdrMode = mode==='sdr';
   const isTodoMode = mode==='todo';
+  const isWrittenMode = mode==='written';
   const isDailyMode = mode==='daily';
   const isFolioMode = mode==='folio';
   const isDailyFolio = isDailyMode || isFolioMode;
-  const isIsolatedMode = isCommissionsMode || isSdrMode || isTodoMode || isScorecardMode; // tabs that show ONLY their own content
+  const isIsolatedMode = isCommissionsMode || isSdrMode || isTodoMode || isScorecardMode || isWrittenMode; // tabs that show ONLY their own content
 
+  document.getElementById('writtenModeSection').style.display = isWrittenMode ? '' : 'none';
+  if(isWrittenMode) renderWrittenBusiness();
   document.getElementById('scorecardModeSection').style.display = isScorecardMode ? '' : 'none';
   document.getElementById('periodSelect').style.visibility = isDailyFolio ? 'visible' : 'hidden';
   document.getElementById('producerModeSelect').style.visibility = isProducerMode ? 'visible' : 'hidden';
@@ -1383,6 +1427,7 @@ document.getElementById('btnDaily').addEventListener('click', ()=>{ mode='daily'
 document.getElementById('btnFolio').addEventListener('click', ()=>{ mode='folio'; render(); });
 document.getElementById('btnProducer').addEventListener('click', ()=>{ mode='producer'; render(); });
 document.getElementById('btnCommissions').addEventListener('click', ()=>{ mode='commissions'; render(); });
+document.getElementById('btnWritten').addEventListener('click', ()=>{ mode='written'; render(); });
 document.getElementById('btnSdrTransfers').addEventListener('click', ()=>{ mode='sdr'; render(); });
 document.getElementById('btnToDoList').addEventListener('click', ()=>{ mode='todo'; render(); });
 document.getElementById('periodSelect').addEventListener('change', renderPeriod);
@@ -1819,6 +1864,105 @@ function renderCommissions(folioKey){
 
   renderSdrCompensation();
 }
+
+// ---------- Written Business (mirrors AgencyZoom's own "Written Business" chart, in Ironwood's brand) ----------
+const wbState = { folioKey: null, carrier: 'all', bizType: 'all', metric: 'premium' };
+let wbChart;
+
+const COMMERCIAL_POLICY_KEYWORDS = /commercial|workers comp|\bbop\b|\bgl\b|builders risk|e&o|umbrella.*business/i;
+function wbIsCommercial(policyType){
+  return !!(policyType && COMMERCIAL_POLICY_KEYWORDS.test(policyType));
+}
+
+function wbPopulateFolioSelect(){
+  const sel = document.getElementById('wbFolioSelect');
+  const keys = Object.keys(SALES.folio).sort().reverse();
+  sel.innerHTML = keys.map(k=>`<option value="${k}">${SALES.folio[k].label || k}</option>`).join('');
+  if(!wbState.folioKey || !SALES.folio[wbState.folioKey]) wbState.folioKey = keys[0];
+  sel.value = wbState.folioKey;
+}
+
+function wbPopulateCarrierSelect(){
+  const sel = document.getElementById('wbCarrierSelect');
+  const rec = SALES.folio[wbState.folioKey];
+  const carriers = [...new Set((rec.sales||[]).map(s=>s.source).filter(Boolean))].sort();
+  sel.innerHTML = `<option value="all">All Carriers</option>` + carriers.map(c=>`<option value="${c}">${c}</option>`).join('');
+  if(!carriers.includes(wbState.carrier)) wbState.carrier = 'all';
+  sel.value = wbState.carrier;
+}
+
+function wbFilteredSales(){
+  const rec = SALES.folio[wbState.folioKey];
+  return (rec.sales||[]).filter(s=>{
+    if(wbState.carrier!=='all' && s.source!==wbState.carrier) return false;
+    const isCommercial = wbIsCommercial(s.policyType);
+    if(wbState.bizType==='commercial' && !isCommercial) return false;
+    if(wbState.bizType==='personal' && isCommercial) return false;
+    return true;
+  });
+}
+
+function renderWrittenBusiness(){
+  wbPopulateFolioSelect();
+  wbPopulateCarrierSelect();
+  document.getElementById('wbBizTypeSelect').value = wbState.bizType;
+  document.getElementById('wbMetricPremium').classList.toggle('active', wbState.metric==='premium');
+  document.getElementById('wbMetricPolicies').classList.toggle('active', wbState.metric==='policies');
+
+  const filtered = wbFilteredSales();
+  const byProducer = {};
+  filtered.forEach(s=>{
+    if(!byProducer[s.producer]) byProducer[s.producer] = {premium:0, policies:0};
+    byProducer[s.producer].premium += s.premium||0;
+    byProducer[s.producer].policies += 1;
+  });
+  const entries = Object.entries(byProducer).sort((a,b)=>b[1][wbState.metric]-a[1][wbState.metric]);
+  const totalPremium = entries.reduce((a,[,v])=>a+v.premium,0);
+  const totalPolicies = entries.reduce((a,[,v])=>a+v.policies,0);
+
+  document.getElementById('wbKpiRow').innerHTML = `
+    <div class="kpi">
+      <div class="kpi-label">Premium</div>
+      <div class="kpi-value">${fmtMoney(totalPremium)}</div>
+      <div class="kpi-sub">${SALES.folio[wbState.folioKey].label || wbState.folioKey}</div>
+    </div>
+    <div class="kpi alt">
+      <div class="kpi-label">Policies</div>
+      <div class="kpi-value">${totalPolicies}</div>
+      <div class="kpi-sub">${wbState.carrier==='all'?'All carriers':wbState.carrier}${wbState.bizType!=='all' ? ' · '+(wbState.bizType==='commercial'?'Commercial':'Personal') : ''}</div>
+    </div>
+  `;
+
+  document.getElementById('wbChartTitle').textContent =
+    'Written Business by Producer — ' + (wbState.metric==='premium' ? 'Premium' : 'Policies');
+
+  if(wbChart) wbChart.destroy();
+  wbChart = new Chart(document.getElementById('wbChart'), {
+    type:'bar',
+    data:{
+      labels: entries.map(([p])=>p),
+      datasets:[{
+        data: entries.map(([,v])=>v[wbState.metric]),
+        backgroundColor: entries.map((_,i)=>GREEN_PALETTE[i % GREEN_PALETTE.length])
+      }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      ironwoodLabelMoney: wbState.metric==='premium',
+      plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=> wbState.metric==='premium' ? fmtMoney(c.raw) : c.raw+' polic'+(c.raw===1?'y':'ies') }} },
+      scales:{
+        x:{grid:{display:false}, ticks:{font:{family:'Arial',size:11}}},
+        y:{grid:{color:'#EAEEE7'}, ticks:{font:{family:'Arial',size:10}, callback:v=> wbState.metric==='premium' ? '$'+v.toLocaleString() : v}}
+      }
+    }
+  });
+}
+
+document.getElementById('wbFolioSelect').addEventListener('change', e=>{ wbState.folioKey = e.target.value; wbState.carrier='all'; renderWrittenBusiness(); });
+document.getElementById('wbCarrierSelect').addEventListener('change', e=>{ wbState.carrier = e.target.value; renderWrittenBusiness(); });
+document.getElementById('wbBizTypeSelect').addEventListener('change', e=>{ wbState.bizType = e.target.value; renderWrittenBusiness(); });
+document.getElementById('wbMetricPremium').addEventListener('click', ()=>{ wbState.metric='premium'; renderWrittenBusiness(); });
+document.getElementById('wbMetricPolicies').addEventListener('click', ()=>{ wbState.metric='policies'; renderWrittenBusiness(); });
 
 function getCurrentMonthRange(){
   const now = new Date();
