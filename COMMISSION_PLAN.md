@@ -51,6 +51,16 @@ $5,000 in Broker Fees.
 - Total premium is under $120,000, so no accelerator
 - **Total commission: $6,900**
 
+## 5. Payment timing
+
+- **Producers** are paid on the **previous, fully-closed folio's** results — not the
+  current in-progress folio. The in-progress folio's numbers are a live running
+  total for tracking qualification progress, but payroll is calculated once that
+  folio closes.
+- **SDRs**: Jacqueline is currently the agency's only active SDR. SDR bonuses are
+  paid the **following month** for the **previous month's** transfer activity —
+  e.g. September's payroll covers August's transfers, not September's.
+
 ## Source of truth
 
 This file is documentation, not the calculation itself. The live logic lives in
